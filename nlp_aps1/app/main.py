@@ -1,43 +1,40 @@
 from fastapi import FastAPI, Query
-import os
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+import numpy as np
 import uvicorn
 
-class DummyModel:
-    def predict(self, X):
-        return "dummy prediction"
-
-def load_model():
-    predictor = DummyModel()
-    return predictor
-
 app = FastAPI()
-app.predictor = load_model()
 
-@app.get("/hello")
-def read_hello():
-    return {"message": "hello world"}
+# Load the CSV and process it
+df = pd.read_csv('../scripts/athletes_data.csv')
+df = df.apply(lambda x: x.str.replace('\n', ' ').str.strip())
+df['info'] = df.drop(columns=['Name']).apply(lambda row: ' '.join(row.values.astype(str)), axis=1)
+df = df.dropna()
 
-@app.get("/predict")
-def predict(X: str = Query(..., description="Input text for prediction")):
-    result = app.predictor.predict(X)
-    return {"input_value": X, "predicted_value": result, "message": "prediction successful"}
+vectorizer = TfidfVectorizer()
+X = vectorizer.fit_transform(df['info'])
 
 @app.get("/query")
 def query_route(query: str = Query(..., description="Search query")):
-    # TODO: write your code here, keeping the return format
-    return {"results": [   {'title':'Document title',
-        'content':'Document content (perhaps only the first 500 words?',
-        'relevance': 0.3
-        },
-        {'title':'Document title',
-        'content':'Document content (perhaps only the first 500 words?',
-        'relevance': 0.2
-        },
-        {'title':'Document title',
-        'content':'Document content (perhaps only the first 500 words?',
-        'relevance': 0.1
+    query_vector = vectorizer.transform([query])
+    scores = np.array(X.dot(query_vector.T).todense()).flatten()
+    df['Relevance Score'] = scores
+
+    threshold = 0.01
+    filtered_df = df[df['Relevance Score'] >= threshold]
+    sorted_df = filtered_df.sort_values(by='Relevance Score', ascending=False)
+
+    # Prepare results
+    results = []
+    for _, row in sorted_df.iterrows():
+        result = {
+            'title': row['Name'],
+            'relevance': row['Relevance Score']
         }
-    ], "message": "OK"}
+        results.append(result)
+    
+    return {"results": results[:5], "message": "OK"}
 
 def run():
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
